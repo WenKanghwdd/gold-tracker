@@ -183,9 +183,10 @@ let cnHistory = [];   // 国内历史数据
 let usHistory = [];   // 国际历史数据
 let alerts = JSON.parse(localStorage.getItem('goldAlerts') || '[]');
 
-// ============ 数据源 ============
+// ============ 数据源 & CORS 代理 ============
 // Yahoo Finance 公共 API (无需 key)
 const YAHOO_BASE = 'https://query1.finance.yahoo.com/v8/finance/chart/';
+const CORS_PROXY = 'https://corsproxy.io/?';
 
 // 国内沪金主力合约（新浪）
 const CN_SYMBOL = 'hf_GC';   // 沪金主力
@@ -202,7 +203,7 @@ async function init() {
 // ============ 实时价格 ============
 async function fetchCurrentPrices() {
   try {
-    const [cnRes, usRes] = await Promise.all([
+      const [cnRes, usRes] = await Promise.all([
       fetchCNPrice(),
       fetchUSPrice()
     ]);
@@ -272,8 +273,8 @@ async function fetchCNPrice() {
 // 国际金价 - Yahoo Finance XAUUSD
 async function fetchUSPrice() {
   try {
-    const url = `${YAHOO_BASE}GC=F?interval=1d&range=5d`;
-    const resp = await fetch(url);
+      const usUrl = `${YAHOO_BASE}GC=F?interval=1d&range=5d`;
+      const resp = await fetch(CORS_PROXY + encodeURIComponent(usUrl));
     const data = await resp.json();
     const result = data.chart.result[0];
     const meta = result.meta;
@@ -304,8 +305,8 @@ async function fetchUSPrice() {
 // 获取美元/人民币汇率
 async function fetchCNYRate() {
   try {
-    const url = `${YAHOO_BASE}CNY=X?interval=1d&range=1d`;
-    const resp = await fetch(url);
+  const cnyUrl = `${YAHOO_BASE}CNY=X?interval=1d&range=1d`;
+    const resp = await fetch(CORS_PROXY + encodeURIComponent(cnyUrl));
     const data = await resp.json();
     return data.chart.result[0].meta.regularMarketPrice;
   } catch(e) {
@@ -329,7 +330,8 @@ async function fetchHistory(range) {
   const cnyRate = await fetchCNYRate();
 
   try {
-    const resp = await fetch(`${YAHOO_BASE}GC=F?interval=${interval}&range=${rng}`);
+    const histUrl = `${YAHOO_BASE}GC=F?interval=${interval}&range=${rng}`;
+    const resp = await fetch(CORS_PROXY + encodeURIComponent(histUrl));
     const data = await resp.json();
     const result = data.chart.result[0];
     const timestamps = result.timestamp;
