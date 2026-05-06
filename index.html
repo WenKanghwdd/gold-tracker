@@ -66,6 +66,7 @@
     .alert-type-select { padding: 8px; border: 0.5px solid var(--border); border-radius: 8px; font-size: 13px; background: var(--bg); outline: none; }
     .add-btn { padding: 8px 14px; background: var(--c-gold); color: #fff; border: none; border-radius: 8px; font-size: 13px; cursor: pointer; white-space: nowrap; }
     .add-btn:hover { background: var(--c-gold-dark); }
+    .add-btn:disabled { background: #ccc; cursor: not-allowed; }
     .alert-list { display: flex; flex-direction: column; gap: 6px; }
     .alert-item { display: flex; align-items: center; justify-content: space-between; background: #FFFBF0; border: 0.5px solid #E8D5A0; border-radius: 8px; padding: 8px 12px; font-size: 13px; }
     .alert-item .alert-info { display: flex; align-items: center; gap: 8px; }
@@ -89,9 +90,22 @@
     @keyframes spin { to { transform: rotate(360deg); } }
 
     .no-data { text-align: center; padding: 24px; color: var(--text3); font-size: 13px; }
+
+    .email-hint { font-size: 11px; color: var(--text3); line-height: 1.5; margin-bottom: 8px; }
+    .email-hint a { color: var(--c-gold); text-decoration: none; }
+    .email-hint a:hover { text-decoration: underline; }
+    .email-status { font-size: 12px; margin-top: 8px; text-align: center; padding: 6px; border-radius: 6px; }
+    .email-status.success { background: #E8F5EF; color: var(--c-green); }
+    .email-status.error { background: #FDECEA; color: var(--c-red); }
+    .email-status.sending { background: #FFF8E1; color: #F57C00; }
+
+    .toast { position: fixed; top: 20px; left: 50%; transform: translateX(-50%); background: var(--c-gold-dark); color: #fff; padding: 12px 24px; border-radius: 8px; font-size: 14px; z-index: 1000; opacity: 0; transition: opacity 0.3s; }
+    .toast.show { opacity: 1; }
   </style>
 </head>
 <body>
+
+  <div class="toast" id="toast"></div>
 
   <div class="header">
     <h1>金价追踪器</h1>
@@ -142,6 +156,25 @@
     <div class="alert-list" id="alertList"></div>
   </div>
 
+  <!-- 邮件通知设置 -->
+  <div class="section-title">
+    邮件通知
+    <button class="add-btn" style="padding:4px 10px;font-size:11px" id="emailToggleBtn" onclick="toggleEmailSettings()">设置</button>
+  </div>
+  <div class="alert-section" id="emailSettings" style="display:none">
+    <div class="email-hint">
+      设置后，当价格触发提醒时会发送邮件通知。<br>
+      API Key 仅存储在本地浏览器，不会上传到服务器。<br>
+      <a href="https://resend.com/api-keys" target="_blank">去 Resend 获取 API Key →</a>
+    </div>
+    <div class="alert-row" style="flex-direction:column;gap:8px">
+      <input class="alert-input" id="notifyEmail" type="email" placeholder="接收提醒的邮箱地址" style="width:100%">
+      <input class="alert-input" id="resendKey" type="password" placeholder="Resend API Key" style="width:100%">
+      <button class="add-btn" style="width:100%" onclick="saveEmailSettings()">保存设置</button>
+    </div>
+    <div id="emailStatus"></div>
+  </div>
+
   <!-- 参考信息 -->
   <div class="section-title">参考信息</div>
   <div class="info-bar">
@@ -164,8 +197,7 @@
   </div>
 
   <div class="footer">
-    数据来源：Yahoo Finance / 新浪财经 &nbsp;|&nbsp;
-    <a href="https://finance.yahoo.com/quote/GC=F/" target="_blank">国际金价</a> ·
+    数据来源：新浪财经 &nbsp;|&nbsp;
     <a href="https://finance.eastmoney.com/" target="_blank">东方财富</a> ·
     <a href="https://www.jin10.com/" target="_blank">金十数据</a>
     <br><br>
@@ -177,22 +209,17 @@
 let currentMarket = 'both';
 let currentRange = '1Y';
 let chartInstance = null;
-let cnPrice = null;   // 国内金价元/克
-let usPrice = null;   // 国际金价美元/盎司
-let cnHistory = [];   // 国内历史数据
-let usHistory = [];   // 国际历史数据
+let cnPrice = null;
+let usPrice = null;
+let cnHistory = [];
+let usHistory = [];
 let alerts = JSON.parse(localStorage.getItem('goldAlerts') || '[]');
-
-// ============ 数据源 & CORS 代理 ============
-// Yahoo Finance 公共 API (无需 key)
-const YAHOO_BASE = 'https://query1.finance.yahoo.com/v8/finance/chart/';
-const CORS_PROXY = 'https://api.allorigins.win/raw?url=';
-
-// 国内沪金主力合约（新浪）
-const CN_SYMBOL = 'hf_GC';   // 沪金主力
+let emailSettings = JSON.parse(localStorage.getItem('goldEmailSettings') || '{}');
+let triggeredAlerts = new Set(); // 防止重复触发
 
 // ============ 初始化 ============
 async function init() {
+  loadEmailSettings();
   renderAlerts();
   await fetchCurrentPrices();
   await fetchHistory(currentRange);
@@ -200,10 +227,62 @@ async function init() {
   setInterval(fetchCurrentPrices, 30000);
 }
 
+// ============ 邮件设置 ============
+function loadEmailSettings() {
+  const emailInput = document.getElementById('notifyEmail');
+  const keyInput = document.getElementById('resendKey');
+  if (emailSettings.email) emailInput.value = emailSettings.email;
+  if (emailSettings.apiKey) keyInput.value = emailSettings.apiKey;
+  updateEmailToggleBtn();
+}
+
+function saveEmailSettings() {
+  const email = document.getElementById('notifyEmail').value.trim();
+  const apiKey = document.getElementById('resendKey').value.trim();
+  const statusEl = document.getElementById('emailStatus');
+
+  if (!email || !apiKey) {
+    statusEl.className = 'email-status error';
+    statusEl.textContent = '请填写邮箱地址和 API Key';
+    return;
+  }
+
+  if (!email.includes('@')) {
+    statusEl.className = 'email-status error';
+    statusEl.textContent = '请输入有效的邮箱地址';
+    return;
+  }
+
+  emailSettings = { email, apiKey };
+  localStorage.setItem('goldEmailSettings', JSON.stringify(emailSettings));
+
+  statusEl.className = 'email-status success';
+  statusEl.textContent = '设置已保存！触发提醒时会发送邮件';
+  updateEmailToggleBtn();
+
+  setTimeout(() => { statusEl.textContent = ''; statusEl.className = ''; }, 3000);
+}
+
+function toggleEmailSettings() {
+  const el = document.getElementById('emailSettings');
+  el.style.display = el.style.display === 'none' ? 'block' : 'none';
+}
+
+function updateEmailToggleBtn() {
+  const btn = document.getElementById('emailToggleBtn');
+  if (emailSettings.email) {
+    btn.textContent = '已设置';
+    btn.style.background = 'var(--c-green)';
+  } else {
+    btn.textContent = '设置';
+    btn.style.background = '';
+  }
+}
+
 // ============ 实时价格 ============
 async function fetchCurrentPrices() {
   try {
-      const [cnRes, usRes] = await Promise.all([
+    const [cnRes, usRes] = await Promise.all([
       fetchCNPrice(),
       fetchUSPrice()
     ]);
@@ -220,9 +299,8 @@ async function fetchCurrentPrices() {
     notifyAlerts();
 
   } catch(e) {
-    console.warn('价格获取失败，使用备用数据', e);
+    console.warn('价格获取失败', e);
     document.getElementById('lastUpdated').textContent = '数据获取异常 ' + new Date().toLocaleTimeString('zh-CN');
-    // 尝试显示上次数据
     if (cnPrice) renderPriceCards();
   }
 }
@@ -233,11 +311,9 @@ async function fetchCNPrice() {
     const url = 'https://hq.sinajs.cn/list=hf_GC';
     const resp = await fetch(url, { headers: { 'Referer': 'https://finance.sina.com.cn' } });
     const text = await resp.text();
-    // 格式: var hq_str_hf_GC="4695.500,,4691.900,4692.400,4734.600,4556.100,时间,开盘,昨收,...日期...";
     const match = text.match(/="([^"]+)"/);
     if (match) {
       const parts = match[1].split(',');
-      // parts[2]=当前价, parts[3]=昨收, parts[4]=最高, parts[5]=最低, parts[7]=今开, parts[8]=昨结算
       const currentPrice = parseFloat(parts[2]) || 0;
       const yesterdayClose = parseFloat(parts[3]) || 0;
       const high = parseFloat(parts[4]) || 0;
@@ -260,7 +336,6 @@ async function fetchCNPrice() {
     console.warn('新浪金价获取失败', e);
   }
 
-  // 备用：使用国际金价换算
   try {
     const us = await fetchUSPrice();
     const cnyRate = await fetchCNYRate();
@@ -286,9 +361,8 @@ async function fetchUSPrice() {
     const match = text.match(/="([^"]+)"/);
     if (match) {
       const parts = match[1].split(',');
-      // parts[0]=时间, parts[3]=当前价, parts[5]=买价, parts[6]=卖价, parts[7]=最低, parts[8]=最高
       const price = parseFloat(parts[3]) || 0;
-      const open = price; // Sina不单独提供开盘，用当前价
+      const open = price;
       const prevClose = parseFloat(parts[5]) || price;
       const high = parseFloat(parts[8]) || price;
       const low = parseFloat(parts[7]) || price;
@@ -298,7 +372,6 @@ async function fetchUSPrice() {
     }
   } catch(e) {}
 
-  // 备用：根据国内金价倒推
   if (cnPrice && cnPrice.price) {
     try {
       const cnyRate = await fetchCNYRate();
@@ -310,7 +383,7 @@ async function fetchUSPrice() {
   return { price: null, name: '获取失败', unit: '' };
 }
 
-// 获取美元/人民币汇率 - 新浪财经
+// 获取美元/人民币汇率
 async function fetchCNYRate() {
   try {
     const resp = await fetch('https://hq.sinajs.cn/list=USDCNY', {
@@ -320,12 +393,11 @@ async function fetchCNYRate() {
     const match = text.match(/="([^"]+)"/);
     if (match) {
       const parts = match[1].split(',');
-      // 格式: USDCNY,汇率
       const rate = parseFloat(parts[0]);
       if (rate > 0) return rate;
     }
   } catch(e) {}
-  return 7.25; // 备用汇率
+  return 7.25;
 }
 
 // ============ 历史数据 ============
@@ -333,9 +405,7 @@ async function fetchHistory(range) {
   const loader = document.getElementById('chartLoader');
   loader.classList.remove('hidden');
 
-  const rangeMap = {
-    '1W': 7, '1M': 30, '1Y': 365, '5Y': 1825
-  };
+  const rangeMap = { '1W': 7, '1M': 30, '1Y': 365, '5Y': 1825 };
   const rangeDays = rangeMap[currentRange] || 365;
   const cnyRate = await fetchCNYRate();
 
@@ -359,21 +429,19 @@ async function fetchHistory(range) {
     }
   } catch(e) {}
 
-  // 生成国际金价历史（基于新浪实时数据 + 已知历史波动范围）
+  // 生成国际金价历史
   const currentGold = usPrice?.price || 3288;
   const currentGoldCNY = cnPrice?.price || 680;
   const msPerDay = 86400000;
   const now = Date.now();
 
-  // 黄金近5年真实高低价参考（USD/oz）
-  const realHigh52 = 3500;  // 约3500
-  const realLow52 = 1650;  // 2020年低点约1650
-  const realTrend = 0.002; // 约0.2%/天的长期趋势
+  const realHigh52 = 3500;
+  const realLow52 = 1650;
+  const realTrend = 0.002;
 
   usHistory = [];
   for (let i = rangeDays; i >= 0; i--) {
     const date = new Date(now - i * msPerDay);
-    // 加入历史趋势 + 随机波动，范围逼近真实高低价
     const daysFromNow = i;
     const trend = (daysFromNow * realTrend) + (Math.random() - 0.48) * (currentGold * 0.015);
     const usd = parseFloat(Math.max(realLow52 * 0.85,
@@ -381,7 +449,6 @@ async function fetchHistory(range) {
     usHistory.push({ date, usd });
   }
 
-  // 生成国内价格
   if (cnHistory.length === 0) {
     cnHistory = usHistory.map(d => ({
       date: d.date,
@@ -389,7 +456,6 @@ async function fetchHistory(range) {
     }));
   }
 
-  // 更新52周高低价
   document.getElementById('week52High').textContent = `$${realHigh52}`;
   document.getElementById('week52Low').textContent = `$${realLow52}`;
 
@@ -418,14 +484,12 @@ function renderChart() {
   const usdData = usHistory.map(d => d.usd);
   const cnyData = cnHistory.map(d => d.cny);
 
-  // 计算提醒线
   const alertLines = alerts.map(a => ({
     price: parseFloat(a.price),
     type: a.type,
     market: a.market || 'us'
   }));
 
-  // 数据集
   const datasets = [];
 
   if (currentMarket === 'both' || currentMarket === 'us') {
@@ -460,7 +524,6 @@ function renderChart() {
     });
   }
 
-  // 提醒线
   alertLines.forEach(line => {
     const color = line.type === 'above' ? '#E24B4A' : '#1D9E75';
     const label = line.type === 'above' ? '突破上限' : '跌破下限';
@@ -534,7 +597,6 @@ function renderPriceCards() {
   const container = document.getElementById('priceCards');
   let html = '';
 
-  // 国内金价卡片
   if (cnPrice && cnPrice.price && currentMarket !== 'us') {
     const { price: cp, name, open: cpOpen, high: cpHigh, low: cpLow, prevClose: cpPrev, market } = cnPrice;
     const chg = cp - cpPrev;
@@ -553,7 +615,6 @@ function renderPriceCards() {
       </div>`;
   }
 
-  // 国际金价卡片（使用历史数据估算）
   if (usPrice && usPrice.price && currentMarket !== 'cn') {
     const { price: up, open: upOpen, prevClose: upPrev, high: upHigh, low: upLow } = usPrice;
     const chg = up - upPrev;
@@ -618,21 +679,10 @@ function renderStats() {
 
 // ============ 更新信息卡 ============
 function updateInfoCards() {
-  // 国内金价信息
   if (cnPrice && cnPrice.price) {
-    const { open: cpOpen, high: cpHigh, low: cpLow, prevClose: cpPrev } = cnPrice;
+    const { open: cpOpen, high: cpHigh, low: cpLow } = cnPrice;
     if (cpOpen) document.getElementById('openPrice').textContent = `¥${cpOpen.toFixed(2)}`;
     if (cpHigh && cpLow) document.getElementById('highLow').textContent = `¥${cpHigh.toFixed(0)} / ¥${cpLow.toFixed(0)}`;
-  }
-
-  // 国际金价信息（如果有）
-  if (usPrice && usPrice.price) {
-    const { high: upHigh, low: upLow } = usPrice;
-    // 52周数据来自历史图
-    if (upHigh && upLow) {
-      document.getElementById('week52High').textContent = `$${upHigh.toFixed(0)}`;
-      document.getElementById('week52Low').textContent = `$${upLow.toFixed(0)}`;
-    }
   }
 }
 
@@ -685,17 +735,102 @@ function renderAlerts() {
 function checkAlerts() {
   if (!alerts.length || !usPrice) return;
   const current = typeof usPrice === 'object' ? usPrice.price : usPrice;
-  alerts.forEach(a => {
-    const triggered = (a.type === 'above' && current > a.price) ||
-                     (a.type === 'below' && current < a.price);
-    if (triggered) {
+  const currentCNY = cnPrice?.price;
+
+  alerts.forEach((a, idx) => {
+    const triggered = (a.market !== 'cn' && a.type === 'above' && current > a.price) ||
+                     (a.market !== 'cn' && a.type === 'below' && current < a.price) ||
+                     (a.market === 'cn' && currentCNY && a.type === 'above' && currentCNY > a.price) ||
+                     (a.market === 'cn' && currentCNY && a.type === 'below' && currentCNY < a.price);
+
+    const alertKey = `${idx}-${a.price}-${a.type}`;
+    if (triggered && !triggeredAlerts.has(alertKey)) {
+      triggeredAlerts.add(alertKey);
       showNotification(`金价提醒：${a.type === 'above' ? '突破' : '跌破'} ¥${a.price}！`);
+      sendEmailAlert(a, current, currentCNY);
     }
   });
 }
 
 function notifyAlerts() {
   checkAlerts();
+}
+
+// ============ 发送邮件提醒 ============
+async function sendEmailAlert(alert, usdPrice, cnyPrice) {
+  if (!emailSettings.email || !emailSettings.apiKey) return;
+
+  const typeText = alert.type === 'above' ? '突破' : '跌破';
+  const now = new Date().toLocaleString('zh-CN');
+
+  const subject = `【金价提醒】${typeText} ¥${alert.price}`;
+  const htmlBody = `
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+      <div style="background: linear-gradient(135deg, #DAA520, #B8860B); padding: 20px; border-radius: 12px 12px 0 0;">
+        <h1 style="color: white; margin: 0; font-size: 24px;">金价提醒</h1>
+      </div>
+      <div style="background: #fff; padding: 20px; border: 1px solid #E0DDD5; border-top: none; border-radius: 0 0 12px 12px;">
+        <p style="font-size: 16px; color: #333;">您好，</p>
+        <p style="font-size: 16px; color: #333;">您的金价提醒已触发：</p>
+        <div style="background: #FFFBF0; border: 1px solid #E8D5A0; border-radius: 8px; padding: 16px; margin: 16px 0;">
+          <p style="margin: 0 0 8px 0; font-size: 14px; color: #666;">提醒类型：<strong style="color: ${alert.type === 'above' ? '#E24B4A' : '#1D9E75'}">${typeText}</strong></p>
+          <p style="margin: 0 0 8px 0; font-size: 14px; color: #666;">提醒价格：<strong style="color: #B8860B">¥${alert.price}</strong></p>
+          <p style="margin: 0 0 8px 0; font-size: 14px; color: #666;">当前价格：</p>
+          <p style="margin: 0 0 4px 0; font-size: 20px; color: #1A1A18;">国际金价：<strong style="color: #DAA520">$${usdPrice?.toFixed(2) || '--'} / oz</strong></p>
+          <p style="margin: 0; font-size: 20px; color: #1A1A18;">国内金价：<strong style="color: #E24B4A">¥${cnyPrice?.toFixed(2) || '--'} / 克</strong></p>
+        </div>
+        <p style="font-size: 14px; color: #999; margin-top: 16px;">触发时间：${now}</p>
+        <hr style="border: none; border-top: 1px solid #E0DDD5; margin: 16px 0;">
+        <p style="font-size: 12px; color: #999;">此邮件由金价追踪器自动发送，请勿回复。</p>
+      </div>
+    </div>
+  `;
+
+  try {
+    const response = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${emailSettings.apiKey}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        from: '金价追踪器 <onboarding@resend.dev>',
+        to: emailSettings.email,
+        subject: subject,
+        html: htmlBody
+      })
+    });
+
+    if (response.ok) {
+      showToast('邮件已发送至 ' + emailSettings.email);
+    } else {
+      const error = await response.json();
+      console.error('邮件发送失败:', error);
+      showToast('邮件发送失败，请检查设置');
+    }
+  } catch(e) {
+    console.error('邮件发送异常:', e);
+    showToast('邮件发送异常');
+  }
+}
+
+// ============ Toast 提示 ============
+function showToast(msg) {
+  const toast = document.getElementById('toast');
+  toast.textContent = msg;
+  toast.classList.add('show');
+  setTimeout(() => { toast.classList.remove('show'); }, 3000);
+}
+
+// ============ 通知提示 ============
+function showNotification(msg) {
+  if ('Notification' in window && Notification.permission === 'granted') {
+    new Notification('金价提醒', { body: msg, icon: '⚠️' });
+  } else if ('Notification' in window && Notification.permission !== 'denied') {
+    Notification.requestPermission().then(p => {
+      if (p === 'granted') new Notification('金价提醒', { body: msg });
+    });
+  }
 }
 
 // ============ 切换市场 ============
@@ -718,17 +853,6 @@ function changeRange(range) {
     btn.classList.toggle('active', btn.textContent === range);
   });
   fetchHistory(range);
-}
-
-// ============ 通知提示 ============
-function showNotification(msg) {
-  if ('Notification' in window && Notification.permission === 'granted') {
-    new Notification('金价提醒', { body: msg, icon: '⚠️' });
-  } else if ('Notification' in window && Notification.permission !== 'denied') {
-    Notification.requestPermission().then(p => {
-      if (p === 'granted') new Notification('金价提醒', { body: msg });
-    });
-  }
 }
 
 // ============ 启动 ============
