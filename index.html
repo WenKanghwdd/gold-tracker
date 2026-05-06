@@ -409,29 +409,8 @@ async function fetchHistory(range) {
   const rangeDays = rangeMap[currentRange] || 365;
   const cnyRate = await fetchCNYRate();
 
-  // 尝试新浪沪金历史数据
-  try {
-    const scaleMap = { '1W': 5, '1M': 15, '1Y': 240, '5Y': 240 };
-    const datalenMap = { '1W': 10, '1M': 30, '1Y': 60, '5Y': 120 };
-    const scale = scaleMap[currentRange] || 240;
-    const datalen = datalenMap[currentRange] || 60;
-
-    const resp = await fetch(
-      `https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/CN_MarketData.getKLineData?symbol=hf_GC&scale=${scale}&ma=no&datalen=${datalen}`,
-      { headers: { 'Referer': 'https://finance.sina.com.cn' } }
-    );
-    const data = await resp.json();
-    if (Array.isArray(data) && data.length > 0) {
-      cnHistory = data.map(d => ({
-        date: new Date(d.day),
-        cny: parseFloat(d.close) || 0
-      })).filter(d => d.cny > 0);
-    }
-  } catch(e) {}
-
-  // 生成国际金价历史
+  // 基于当前价格生成模拟历史数据
   const currentGold = usPrice?.price || 3288;
-  const currentGoldCNY = cnPrice?.price || 680;
   const msPerDay = 86400000;
   const now = Date.now();
 
@@ -449,12 +428,11 @@ async function fetchHistory(range) {
     usHistory.push({ date, usd });
   }
 
-  if (cnHistory.length === 0) {
-    cnHistory = usHistory.map(d => ({
-      date: d.date,
-      cny: parseFloat((d.usd * cnyRate / 31.1035).toFixed(2))
-    }));
-  }
+  // 生成国内价格（基于国际金价换算）
+  cnHistory = usHistory.map(d => ({
+    date: d.date,
+    cny: parseFloat((d.usd * cnyRate / 31.1035).toFixed(2))
+  }));
 
   document.getElementById('week52High').textContent = `$${realHigh52}`;
   document.getElementById('week52Low').textContent = `$${realLow52}`;
