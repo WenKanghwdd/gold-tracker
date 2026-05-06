@@ -287,8 +287,8 @@ async function fetchCurrentPrices() {
       fetchUSPrice()
     ]);
 
-    cnPrice = cnRes.price;
-    usPrice = usRes.price;
+    cnPrice = cnRes;
+    usPrice = usRes;
 
     document.getElementById('lastUpdated').textContent =
       '更新于 ' + new Date().toLocaleTimeString('zh-CN');
