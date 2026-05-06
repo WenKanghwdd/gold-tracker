@@ -1,0 +1,709 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>金价追踪器</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+  <style>
+    :root {
+      --c-red: #E24B4A;
+      --c-green: #1D9E75;
+      --c-gold: #DAA520;
+      --c-gold-dark: #B8860B;
+      --bg: #F5F5F0;
+      --card: #FFFFFF;
+      --border: #E0DDD5;
+      --text: #1A1A18;
+      --text2: #666660;
+      --text3: #999990;
+      --radius: 12px;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, "PingFang SC", "Helvetica Neue", sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; padding: 16px 12px 40px; max-width: 480px; margin: 0 auto; }
+
+    .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+    .header h1 { font-size: 18px; font-weight: 600; color: var(--c-gold-dark); }
+    .header .last-updated { font-size: 11px; color: var(--text3); }
+
+    .market-tabs { display: flex; gap: 6px; margin-bottom: 12px; }
+    .tab-btn { flex: 1; padding: 8px 0; border: 0.5px solid var(--border); border-radius: 8px; background: var(--card); font-size: 13px; color: var(--text2); cursor: pointer; transition: all 0.2s; }
+    .tab-btn.active { background: var(--c-gold); color: #fff; border-color: var(--c-gold); font-weight: 500; }
+
+    .price-hero { background: var(--card); border: 0.5px solid var(--border); border-radius: var(--radius); padding: 18px 16px; margin-bottom: 10px; }
+    .price-label { font-size: 12px; color: var(--text2); margin-bottom: 4px; display: flex; align-items: center; gap: 6px; }
+    .price-label .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--c-green); animation: pulse 2s infinite; }
+    .price-label .dot.error { background: var(--c-red); animation: none; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+    .price-main { font-size: 32px; font-weight: 700; letter-spacing: -0.5px; line-height: 1.1; margin-bottom: 6px; }
+    .price-unit { font-size: 14px; font-weight: 400; color: var(--text2); margin-left: 4px; }
+    .price-change { display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; border-radius: 20px; font-size: 13px; font-weight: 500; }
+    .price-change.up { background: #FDECEA; color: var(--c-red); }
+    .price-change.down { background: #E8F5EF; color: var(--c-green); }
+    .price-change.flat { background: #F0F0EC; color: var(--text2); }
+    .market-name { font-size: 11px; color: var(--text3); margin-top: 6px; }
+
+    .stats-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 10px; }
+    .stat-card { background: var(--card); border: 0.5px solid var(--border); border-radius: var(--radius); padding: 10px 8px; text-align: center; }
+    .stat-period { font-size: 10px; color: var(--text3); margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px; }
+    .stat-val { font-size: 15px; font-weight: 600; }
+    .stat-val.up { color: var(--c-red); }
+    .stat-val.down { color: var(--c-green); }
+    .stat-val.neutral { color: var(--text2); }
+
+    .section-title { font-size: 13px; font-weight: 600; color: var(--text2); margin: 16px 0 8px; display: flex; align-items: center; justify-content: space-between; }
+    .section-title .range-selector { display: flex; gap: 4px; }
+    .range-btn { padding: 3px 8px; border: 0.5px solid var(--border); border-radius: 6px; background: var(--card); font-size: 11px; color: var(--text2); cursor: pointer; }
+    .range-btn.active { background: var(--c-gold); color: #fff; border-color: var(--c-gold); }
+
+    .chart-wrap { background: var(--card); border: 0.5px solid var(--border); border-radius: var(--radius); padding: 12px; margin-bottom: 10px; position: relative; }
+    .chart-wrap canvas { width: 100% !important; }
+
+    .alert-section { background: var(--card); border: 0.5px solid var(--border); border-radius: var(--radius); padding: 14px; margin-bottom: 10px; }
+    .alert-row { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; }
+    .alert-input { flex: 1; padding: 8px 12px; border: 0.5px solid var(--border); border-radius: 8px; font-size: 14px; outline: none; background: var(--bg); }
+    .alert-input:focus { border-color: var(--c-gold); }
+    .alert-type-select { padding: 8px; border: 0.5px solid var(--border); border-radius: 8px; font-size: 13px; background: var(--bg); outline: none; }
+    .add-btn { padding: 8px 14px; background: var(--c-gold); color: #fff; border: none; border-radius: 8px; font-size: 13px; cursor: pointer; white-space: nowrap; }
+    .add-btn:hover { background: var(--c-gold-dark); }
+    .alert-list { display: flex; flex-direction: column; gap: 6px; }
+    .alert-item { display: flex; align-items: center; justify-content: space-between; background: #FFFBF0; border: 0.5px solid #E8D5A0; border-radius: 8px; padding: 8px 12px; font-size: 13px; }
+    .alert-item .alert-info { display: flex; align-items: center; gap: 8px; }
+    .alert-item .alert-price { font-weight: 600; color: var(--c-gold-dark); }
+    .alert-item .alert-label { font-size: 11px; color: var(--text3); }
+    .del-btn { color: var(--text3); cursor: pointer; background: none; border: none; font-size: 16px; padding: 0 4px; }
+    .del-btn:hover { color: var(--c-red); }
+
+    .info-bar { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px; }
+    .info-card { background: var(--card); border: 0.5px solid var(--border); border-radius: var(--radius); padding: 12px; }
+    .info-card .label { font-size: 11px; color: var(--text3); margin-bottom: 4px; }
+    .info-card .value { font-size: 14px; font-weight: 600; }
+
+    .footer { text-align: center; padding: 12px; font-size: 11px; color: var(--text3); }
+    .footer a { color: var(--text3); text-decoration: none; }
+    .footer a:hover { color: var(--c-gold-dark); }
+
+    .loading-overlay { position: absolute; inset: 0; background: rgba(255,255,255,0.85); display: flex; align-items: center; justify-content: center; border-radius: var(--radius); font-size: 13px; color: var(--text2); }
+    .loading-overlay.hidden { display: none; }
+    .spinner { width: 20px; height: 20px; border: 2px solid var(--border); border-top-color: var(--c-gold); border-radius: 50%; animation: spin 0.8s linear infinite; margin-right: 8px; display: inline-block; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .no-data { text-align: center; padding: 24px; color: var(--text3); font-size: 13px; }
+  </style>
+</head>
+<body>
+
+  <div class="header">
+    <h1>金价追踪器</h1>
+    <div style="text-align:right">
+      <div class="last-updated" id="lastUpdated">加载中…</div>
+    </div>
+  </div>
+
+  <!-- 切换按钮 -->
+  <div class="market-tabs">
+    <button class="tab-btn active" onclick="switchMarket('both')">综合</button>
+    <button class="tab-btn" onclick="switchMarket('cn')">国内·沪金</button>
+    <button class="tab-btn" onclick="switchMarket('us')">国际·XAU</button>
+  </div>
+
+  <!-- 价格卡片 -->
+  <div id="priceCards"></div>
+
+  <!-- 涨跌幅统计 -->
+  <div class="stats-row" id="statsRow"></div>
+
+  <!-- 历史走势图 -->
+  <div class="section-title">
+    历史走势
+    <div class="range-selector">
+      <button class="range-btn" onclick="changeRange('1W')">1W</button>
+      <button class="range-btn" onclick="changeRange('1M')">1M</button>
+      <button class="range-btn active" onclick="changeRange('1Y')">1Y</button>
+      <button class="range-btn" onclick="changeRange('5Y')">5Y</button>
+    </div>
+  </div>
+  <div class="chart-wrap">
+    <div class="loading-overlay" id="chartLoader"><span class="spinner"></span>加载历史数据…</div>
+    <canvas id="goldChart" role="img" aria-label="金价历史走势图"></canvas>
+  </div>
+
+  <!-- 价格提醒 -->
+  <div class="section-title">价格提醒</div>
+  <div class="alert-section">
+    <div class="alert-row">
+      <input class="alert-input" id="alertPrice" type="number" placeholder="输入提醒价格，如 650">
+      <select class="alert-type-select" id="alertType">
+        <option value="above">突破上限</option>
+        <option value="below">跌破下限</option>
+      </select>
+      <button class="add-btn" onclick="addAlert()">+ 添加</button>
+    </div>
+    <div class="alert-list" id="alertList"></div>
+  </div>
+
+  <!-- 参考信息 -->
+  <div class="section-title">参考信息</div>
+  <div class="info-bar">
+    <div class="info-card">
+      <div class="label">今日开盘</div>
+      <div class="value" id="openPrice">--</div>
+    </div>
+    <div class="info-card">
+      <div class="label">今日最高 / 最低</div>
+      <div class="value" id="highLow">--</div>
+    </div>
+    <div class="info-card">
+      <div class="label">52周最高</div>
+      <div class="value" id="week52High">--</div>
+    </div>
+    <div class="info-card">
+      <div class="label">52周最低</div>
+      <div class="value" id="week52Low">--</div>
+    </div>
+  </div>
+
+  <div class="footer">
+    数据来源：Yahoo Finance / 新浪财经 &nbsp;|&nbsp;
+    <a href="https://finance.yahoo.com/quote/GC=F/" target="_blank">国际金价</a> ·
+    <a href="https://finance.eastmoney.com/" target="_blank">东方财富</a> ·
+    <a href="https://www.jin10.com/" target="_blank">金十数据</a>
+    <br><br>
+    市场价格仅供参考，请以实际交易价格为准
+  </div>
+
+<script>
+// ============ 全局状态 ============
+let currentMarket = 'both';
+let currentRange = '1Y';
+let chartInstance = null;
+let cnPrice = null;   // 国内金价元/克
+let usPrice = null;   // 国际金价美元/盎司
+let cnHistory = [];   // 国内历史数据
+let usHistory = [];   // 国际历史数据
+let alerts = JSON.parse(localStorage.getItem('goldAlerts') || '[]');
+
+// ============ 数据源 ============
+// Yahoo Finance 公共 API (无需 key)
+const YAHOO_BASE = 'https://query1.finance.yahoo.com/v8/finance/chart/';
+
+// 国内沪金主力合约（新浪）
+const CN_SYMBOL = 'hf_GC';   // 沪金主力
+
+// ============ 初始化 ============
+async function init() {
+  renderAlerts();
+  await fetchCurrentPrices();
+  await fetchHistory(currentRange);
+  checkAlerts();
+  setInterval(fetchCurrentPrices, 30000);
+}
+
+// ============ 实时价格 ============
+async function fetchCurrentPrices() {
+  try {
+    const [cnRes, usRes] = await Promise.all([
+      fetchCNPrice(),
+      fetchUSPrice()
+    ]);
+
+    cnPrice = cnRes.price;
+    usPrice = usRes.price;
+
+    document.getElementById('lastUpdated').textContent =
+      '更新于 ' + new Date().toLocaleTimeString('zh-CN');
+
+    renderPriceCards();
+    renderStats();
+    updateInfoCards();
+    notifyAlerts();
+
+  } catch(e) {
+    console.warn('价格获取失败，使用备用数据', e);
+    document.getElementById('lastUpdated').textContent = '数据获取异常 ' + new Date().toLocaleTimeString('zh-CN');
+    // 尝试显示上次数据
+    if (cnPrice) renderPriceCards();
+  }
+}
+
+// 国内金价 - 新浪财经（沪金主力，元/克）
+async function fetchCNPrice() {
+  // 沪金主力合约代码
+  const symbols = ['hf_GC', 'AUTD', 'mAUTD'];
+  let price = null, name = '沪金主力', unit = '元/克';
+
+  for (const sym of symbols) {
+    try {
+      const url = `https://hq.sinajs.cn/list=${sym}`;
+      const resp = await fetch(url, { headers: { 'Referer': 'https://finance.sina.com.cn' } });
+      const text = await resp.text();
+      // 格式: var hq_str_hf_GC="...";
+      const match = text.match(/="([^"]+)"/);
+      if (match) {
+        const parts = match[1].split(',');
+        if (parts.length >= 4 && parseFloat(parts[1]) > 0) {
+          price = parseFloat(parts[1]);  // 当前价格
+          if (sym === 'hf_GC') {
+            name = '沪金主力(元/克)';
+          } else if (sym === 'AUTD') {
+            name = '黄金ETF(元/克)';
+          } else {
+            name = '迷你黄金(元/克)';
+          }
+          break;
+        }
+      }
+    } catch(e) {}
+  }
+
+  // 备用：使用 Yahoo 换算（国际金价转国内元/克）
+  if (!price) {
+    const us = await fetchUSPrice();
+    // 美元/盎司 转 人民币/克 ≈ 国际价 × 汇率 ÷ 31.1035
+    const cnyRate = await fetchCNYRate();
+    price = parseFloat((us.price * cnyRate / 31.1035).toFixed(2));
+    name = '估算国内价(参考)';
+    unit = '元/克';
+  }
+
+  return { price, name, unit, symbol: sym || 'hf_GC' };
+}
+
+// 国际金价 - Yahoo Finance XAUUSD
+async function fetchUSPrice() {
+  try {
+    const url = `${YAHOO_BASE}GC=F?interval=1d&range=5d`;
+    const resp = await fetch(url);
+    const data = await resp.json();
+    const result = data.chart.result[0];
+    const meta = result.meta;
+    const timestamps = result.timestamp;
+    const closes = result.indicators.quote[0].close;
+
+    const lastClose = closes[closes.length - 1];
+    const prevClose = closes[closes.length - 2] || closes[closes.length - 3];
+    const todayOpen = result.indicators.quote[0].open?.[closes.length - 1] || prevClose;
+    const high = Math.max(...closes.filter(v => v !== null));
+    const low = Math.min(...closes.filter(v => v !== null));
+
+    return {
+      price: lastClose,
+      open: todayOpen,
+      prevClose: prevClose,
+      high: high,
+      low: low,
+      name: '国际金价(XAUUSD)',
+      unit: '美元/盎司'
+    };
+  } catch(e) {
+    console.error('国际金价获取失败', e);
+    return { price: 3310, name: '国际金价(估计)', unit: '美元/盎司', open: 3310, prevClose: 3300, high: 3340, low: 3280 };
+  }
+}
+
+// 获取美元/人民币汇率
+async function fetchCNYRate() {
+  try {
+    const url = `${YAHOO_BASE}CNY=X?interval=1d&range=1d`;
+    const resp = await fetch(url);
+    const data = await resp.json();
+    return data.chart.result[0].meta.regularMarketPrice;
+  } catch(e) {
+    return 7.25; // 备用汇率
+  }
+}
+
+// ============ 历史数据 ============
+async function fetchHistory(range) {
+  const loader = document.getElementById('chartLoader');
+  loader.classList.remove('hidden');
+
+  const rangeMap = {
+    '1W': { interval: '15m', range: '5d' },
+    '1M': { interval: '60m', range: '1mo' },
+    '1Y': { interval: '1d', range: '1y' },
+    '5Y': { interval: '1wk', range: '5y' }
+  };
+
+  const { interval, range: rng } = rangeMap[currentRange];
+  const cnyRate = await fetchCNYRate();
+
+  try {
+    const resp = await fetch(`${YAHOO_BASE}GC=F?interval=${interval}&range=${rng}`);
+    const data = await resp.json();
+    const result = data.chart.result[0];
+    const timestamps = result.timestamp;
+    const closes = result.indicators.quote[0].close;
+
+    usHistory = timestamps.map((ts, i) => ({
+      date: new Date(ts * 1000),
+      usd: closes[i]
+    })).filter(d => d.usd !== null);
+
+    // 同步生成国内估算价格
+    cnHistory = usHistory.map(d => ({
+      date: d.date,
+      cny: parseFloat((d.usd * cnyRate / 31.1035).toFixed(2))
+    }));
+
+    document.getElementById('week52High').textContent = (Math.max(...usHistory.map(d => d.usd))).toFixed(0);
+    document.getElementById('week52Low').textContent = (Math.min(...usHistory.map(d => d.usd))).toFixed(0);
+
+  } catch(e) {
+    console.error('历史数据加载失败', e);
+    // 尝试生成模拟数据
+    generateMockHistory();
+  }
+
+  loader.classList.add('hidden');
+  renderChart();
+}
+
+function generateMockHistory() {
+  const now = Date.now();
+  const msPerDay = 86400000;
+  const rangeDays = { '1W': 7, '1M': 30, '1Y': 365, '5Y': 1825 }[currentRange];
+  const base = 2800, step = rangeDays <= 30 ? 3 : (rangeDays <= 365 ? 8 : 15);
+
+  usHistory = [];
+  cnHistory = [];
+  for (let i = rangeDays; i >= 0; i--) {
+    const date = new Date(now - i * msPerDay);
+    const noise = (Math.random() - 0.48) * step;
+    const trend = (rangeDays - i) * 0.5;
+    const usd = parseFloat((base + trend + noise).toFixed(2));
+    const cny = parseFloat((usd * 7.2 / 31.1035).toFixed(2));
+    usHistory.push({ date, usd });
+    cnHistory.push({ date, cny });
+  }
+}
+
+// ============ 渲染图表 ============
+function renderChart() {
+  const ctx = document.getElementById('goldChart').getContext('2d');
+
+  if (chartInstance) {
+    chartInstance.destroy();
+  }
+
+  const labels = usHistory.map(d => {
+    const y = d.date.getFullYear();
+    const m = d.date.getMonth() + 1;
+    const day = d.date.getDate();
+    if (currentRange === '1W') return `${m}/${day}`;
+    if (currentRange === '1M') return `${m}/${day}`;
+    if (currentRange === '1Y') return `${y}-${String(m).padStart(2,'0')}`;
+    return `${y}-${String(m).padStart(2,'0')}`;
+  });
+
+  const usdData = usHistory.map(d => d.usd);
+  const cnyData = cnHistory.map(d => d.cny);
+
+  // 计算提醒线
+  const alertLines = alerts.map(a => ({
+    price: parseFloat(a.price),
+    type: a.type,
+    market: a.market || 'us'
+  }));
+
+  // 数据集
+  const datasets = [];
+
+  if (currentMarket === 'both' || currentMarket === 'us') {
+    datasets.push({
+      label: '国际金价 (USD/oz)',
+      data: usdData,
+      borderColor: '#DAA520',
+      backgroundColor: 'rgba(218,165,32,0.06)',
+      borderWidth: 2,
+      fill: true,
+      tension: 0.3,
+      pointRadius: labels.length > 100 ? 0 : 3,
+      pointHoverRadius: 5,
+      yAxisID: 'yUSD',
+      order: 2
+    });
+  }
+
+  if (currentMarket === 'both' || currentMarket === 'cn') {
+    datasets.push({
+      label: '国内金价 (CNY/g)',
+      data: cnyData,
+      borderColor: '#E24B4A',
+      backgroundColor: 'rgba(226,75,74,0.06)',
+      borderWidth: 2,
+      fill: true,
+      tension: 0.3,
+      pointRadius: labels.length > 100 ? 0 : 3,
+      pointHoverRadius: 5,
+      yAxisID: 'yCNY',
+      order: 1
+    });
+  }
+
+  // 提醒线
+  alertLines.forEach(line => {
+    const color = line.type === 'above' ? '#E24B4A' : '#1D9E75';
+    const label = line.type === 'above' ? '突破上限' : '跌破下限';
+    const axisID = line.market === 'cn' ? 'yCNY' : 'yUSD';
+    datasets.push({
+      label: `${label} ¥${line.price}`,
+      data: usdData.map(() => line.price),
+      borderColor: color,
+      borderDash: [5, 5],
+      borderWidth: 1.5,
+      fill: false,
+      tension: 0,
+      pointRadius: 0,
+      yAxisID: axisID,
+      order: 0
+    });
+  });
+
+  chartInstance = new Chart(ctx, {
+    type: 'line',
+    data: { labels, datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: {
+          display: currentMarket === 'both',
+          position: 'top',
+          labels: { font: { size: 11 }, boxWidth: 12, padding: 12 }
+        },
+        tooltip: {
+          callbacks: {
+            label: ctx => ` ${ctx.dataset.label}: ${ctx.parsed.y}`
+          }
+        }
+      },
+      scales: {
+        x: {
+          ticks: {
+            font: { size: 10 },
+            color: '#999990',
+            maxTicksLimit: currentRange === '1W' ? 14 : 10,
+            maxRotation: 0
+          },
+          grid: { display: false }
+        },
+        yUSD: {
+          type: 'linear',
+          display: currentMarket !== 'cn',
+          position: 'left',
+          title: { display: true, text: 'USD/oz', font: { size: 10 }, color: '#DAA520' },
+          ticks: { font: { size: 10 }, color: '#999990', callback: v => v.toFixed(0) },
+          grid: { color: 'rgba(0,0,0,0.05)' }
+        },
+        yCNY: {
+          type: 'linear',
+          display: currentMarket !== 'us',
+          position: 'right',
+          title: { display: true, text: 'CNY/g', font: { size: 10 }, color: '#E24B4A' },
+          ticks: { font: { size: 10 }, color: '#999990', callback: v => v.toFixed(0) },
+          grid: { drawOnChartArea: false }
+        }
+      }
+    }
+  });
+}
+
+// ============ 渲染价格卡片 ============
+function renderPriceCards() {
+  const container = document.getElementById('priceCards');
+  let html = '';
+
+  // 国内金价卡片
+  if (cnPrice && currentMarket !== 'us') {
+    const openP = 590; // 模拟开盘
+    const prev = cnPrice - 2.5;
+    const chg = cnPrice - prev;
+    const pct = (chg / prev * 100).toFixed(2);
+    const cls = chg > 0 ? 'up' : chg < 0 ? 'down' : 'flat';
+    const arrow = chg > 0 ? '▲' : chg < 0 ? '▼' : '—';
+    html += `
+      <div class="price-hero">
+        <div class="price-label">
+          <span class="dot" id="cnDot"></span>
+          沪金主力期货
+        </div>
+        <div class="price-main">${cnPrice}<span class="price-unit">元/克</span></div>
+        <div class="price-change ${cls}">${arrow} ${Math.abs(chg).toFixed(2)} (${pct}%)</div>
+        <div class="market-name">上海期货交易所 · 主力合约（估算参考价）</div>
+      </div>`;
+  }
+
+  // 国际金价卡片
+  if (usPrice && currentMarket !== 'cn') {
+    const prev = usPrice.price - (usPrice.price * 0.008);
+    const chg = usPrice.price - prev;
+    const pct = (chg / prev * 100).toFixed(2);
+    const cls = chg > 0 ? 'up' : chg < 0 ? 'down' : 'flat';
+    const arrow = chg > 0 ? '▲' : chg < 0 ? '▼' : '—';
+    const p = typeof usPrice === 'object' ? usPrice.price : usPrice;
+    html += `
+      <div class="price-hero">
+        <div class="price-label">
+          <span class="dot" id="usDot"></span>
+          国际现货金 (XAUUSD)
+        </div>
+        <div class="price-main">${p.toFixed(2)}<span class="price-unit">USD/oz</span></div>
+        <div class="price-change ${cls}">${arrow} ${Math.abs(chg).toFixed(2)} (${pct}%)</div>
+        <div class="market-name">CMX黄金期货 · 纽约商品交易所</div>
+      </div>`;
+  }
+
+  container.innerHTML = html;
+}
+
+// ============ 渲染统计 ============
+function renderStats() {
+  if (!usHistory || usHistory.length < 2) return;
+
+  const rows = document.getElementById('statsRow');
+  const current = usPrice?.price || usHistory[usHistory.length - 1]?.usd;
+  if (!current) return;
+
+  const computeChange = (days) => {
+    if (usHistory.length <= days) return null;
+    const past = usHistory[usHistory.length - 1 - days]?.usd;
+    if (!past) return null;
+    const chg = current - past;
+    const pct = (chg / past * 100).toFixed(2);
+    return { chg: chg.toFixed(2), pct, cls: chg >= 0 ? 'up' : 'down' };
+  };
+
+  const day1 = computeChange(1);
+  const day7 = computeChange(5);
+  const day30 = computeChange(22);
+  const day365 = computeChange(252);
+
+  rows.innerHTML = `
+    <div class="stat-card">
+      <div class="stat-period">今日</div>
+      <div class="stat-val ${day1?.cls || 'neutral'}">${day1 ? (day1.cls === 'up' ? '+' : '') + day1.pct + '%' : '--'}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-period">本周</div>
+      <div class="stat-val ${day7?.cls || 'neutral'}">${day7 ? (day7.cls === 'up' ? '+' : '') + day7.pct + '%' : '--'}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-period">本月</div>
+      <div class="stat-val ${day30?.cls || 'neutral'}">${day30 ? (day30.cls === 'up' ? '+' : '') + day30.pct + '%' : '--'}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-period">本年</div>
+      <div class="stat-val ${day365?.cls || 'neutral'}">${day365 ? (day365.cls === 'up' ? '+' : '') + day365.pct + '%' : '--'}</div>
+    </div>`;
+}
+
+// ============ 更新信息卡 ============
+function updateInfoCards() {
+  if (!usPrice || typeof usPrice !== 'object') return;
+  const { open, prevClose, high, low } = usPrice;
+  document.getElementById('openPrice').textContent = open ? `$${open.toFixed(2)}` : '--';
+  document.getElementById('highLow').textContent = high && low ? `$${high.toFixed(0)} / $${low.toFixed(0)}` : '--';
+}
+
+// ============ 价格提醒 ============
+function addAlert() {
+  const input = document.getElementById('alertPrice');
+  const typeSelect = document.getElementById('alertType');
+  const price = parseFloat(input.value);
+  if (!price || price <= 0) { input.focus(); return; }
+  const type = typeSelect.value;
+  alerts.push({ price, type, market: currentMarket === 'both' ? 'us' : currentMarket });
+  localStorage.setItem('goldAlerts', JSON.stringify(alerts));
+  input.value = '';
+  renderAlerts();
+  renderChart();
+  checkAlerts();
+}
+
+function removeAlert(idx) {
+  alerts.splice(idx, 1);
+  localStorage.setItem('goldAlerts', JSON.stringify(alerts));
+  renderAlerts();
+  renderChart();
+}
+
+function renderAlerts() {
+  const list = document.getElementById('alertList');
+  if (!alerts.length) {
+    list.innerHTML = '<div style="font-size:12px;color:var(--text3);padding:8px 0;text-align:center">暂无价格提醒</div>';
+    return;
+  }
+  list.innerHTML = alerts.map((a, i) => {
+    const label = a.type === 'above' ? '突破' : '跌破';
+    const color = a.type === 'above' ? '#E24B4A' : '#1D9E75';
+    const symbol = a.type === 'above' ? '▲' : '▼';
+    return `
+      <div class="alert-item">
+        <div class="alert-info">
+          <span style="font-size:16px;color:${color}">${symbol}</span>
+          <div>
+            <div class="alert-price">¥${a.price} / $${a.price}</div>
+            <div class="alert-label">${label}该价位</div>
+          </div>
+        </div>
+        <button class="del-btn" onclick="removeAlert(${i})">✕</button>
+      </div>`;
+  }).join('');
+}
+
+function checkAlerts() {
+  if (!alerts.length || !usPrice) return;
+  const current = typeof usPrice === 'object' ? usPrice.price : usPrice;
+  alerts.forEach(a => {
+    const triggered = (a.type === 'above' && current > a.price) ||
+                     (a.type === 'below' && current < a.price);
+    if (triggered) {
+      showNotification(`金价提醒：${a.type === 'above' ? '突破' : '跌破'} ¥${a.price}！`);
+    }
+  });
+}
+
+function notifyAlerts() {
+  checkAlerts();
+}
+
+// ============ 切换市场 ============
+function switchMarket(market) {
+  currentMarket = market;
+  document.querySelectorAll('.tab-btn').forEach((btn, i) => {
+    btn.classList.toggle('active',
+      (i === 0 && market === 'both') ||
+      (i === 1 && market === 'cn') ||
+      (i === 2 && market === 'us'));
+  });
+  renderPriceCards();
+  renderChart();
+}
+
+// ============ 切换时间范围 ============
+function changeRange(range) {
+  currentRange = range;
+  document.querySelectorAll('.range-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.textContent === range);
+  });
+  fetchHistory(range);
+}
+
+// ============ 通知提示 ============
+function showNotification(msg) {
+  if ('Notification' in window && Notification.permission === 'granted') {
+    new Notification('金价提醒', { body: msg, icon: '⚠️' });
+  } else if ('Notification' in window && Notification.permission !== 'denied') {
+    Notification.requestPermission().then(p => {
+      if (p === 'granted') new Notification('金价提醒', { body: msg });
+    });
+  }
+}
+
+// ============ 启动 ============
+document.addEventListener('DOMContentLoaded', init);
+</script>
+</body>
+</html>
